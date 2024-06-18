@@ -1,0 +1,8 @@
+[package]
+name = "wlmouse-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+config = { version = "0.14.0" }
+hidapi = { version = "2.6.1", features = ["windows-native"] }
