@@ -31,8 +31,8 @@ fn main() -> Result<(), String> {
     wlmouse.get_battery();
     println!("Battery: {}%", wlmouse.battery);
 
-    // wlmouse.get_polling_rate();
-    // println!("Polling rate: {}Hz", wlmouse.polling_rate);
+    wlmouse.get_polling_rate();
+    println!("Polling rate: {}Hz", wlmouse.polling_rate);
 
     Ok(())
 }

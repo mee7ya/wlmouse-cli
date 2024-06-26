@@ -108,19 +108,11 @@ impl WLMouse {
             WLMouseProduct::BeastXReceiver | WLMouseProduct::BeastX => {
                 let mut input_buffer = [0x00_u8; 64];
                 input_buffer[0] = 0x04_u8;
-                input_buffer[3] = 0xaa_u8;
-                // input_buffer[3] = 0x1a_u8;
-                self.device.write(&input_buffer).unwrap();
-                let mut buf = [0x00_u8; 64];
-                self.device.read(&mut buf).unwrap();
-                sleep(Duration::from_millis(100));
                 input_buffer[3] = 0x1a_u8;
-                self.device.write(&input_buffer).unwrap();
-                self.device.read(&mut buf).unwrap();
-                self.battery = buf[8];
+                self.battery = self.from_interrupt(&mut input_buffer, 8);
             }
             _ => (),
-        }
+        };
     }
 
     /**
@@ -128,28 +120,56 @@ impl WLMouse {
     Device can sometimes output incorrect values, possibly repeat report multiple times?
     */
     pub fn get_polling_rate(&mut self) -> () {
-        let mut input_buffer = [0x00_u8; 65];
-        input_buffer[3] = 0x02_u8;
-        input_buffer[4] = 0x02_u8;
-        input_buffer[5] = 0x01_u8; // polling rate byte
-        input_buffer[6] = 0x80_u8; // polling rate byte
-        input_buffer[7] = 0x01_u8; // polling rate byte
+        match WLMouseProduct::try_from(self.product_id).unwrap() {
+            WLMouseProduct::BeastX8KReceiver | WLMouseProduct::BeastX8K => {
+                let mut input_buffer = [0x00_u8; 65];
+                input_buffer[3] = 0x02_u8;
+                input_buffer[4] = 0x02_u8;
+                input_buffer[5] = 0x01_u8; // polling rate byte
+                input_buffer[6] = 0x80_u8; // polling rate byte
+                input_buffer[7] = 0x01_u8; // polling rate byte
 
-        let mut output_buffer = [0x00_u8; 65];
+                let mut output_buffer = [0x00_u8; 65];
 
-        let _ = self.device.send_feature_report(&input_buffer);
-        sleep(Duration::from_millis(100)); // We have to sleep a bit, so device can prepare results
-        let _ = self.device.get_feature_report(&mut output_buffer);
-        self.polling_rate = match output_buffer[8] {
-            0x08 => 125,
-            0x04 => 250,
-            0x02 => 500,
-            0x01 => 1000,
-            0x20 => 2000,
-            0x40 => 4000,
-            0x80 => 8000,
-            _ => 0,
-        };
+                let _ = self.device.send_feature_report(&input_buffer);
+                sleep(Duration::from_millis(100)); // We have to sleep a bit, so device can prepare results
+                let _ = self.device.get_feature_report(&mut output_buffer);
+                self.polling_rate = match output_buffer[8] {
+                    0x08 => 125,
+                    0x04 => 250,
+                    0x02 => 500,
+                    0x01 => 1000,
+                    0x20 => 2000,
+                    0x40 => 4000,
+                    0x80 => 8000,
+                    _ => 0,
+                }
+            }
+            WLMouseProduct::BeastXReceiver | WLMouseProduct::BeastX => {
+                let mut input_buffer = [0x00_u8; 64];
+                input_buffer[0] = 0x04_u8;
+                input_buffer[1] = 0x6b_u8;
+                input_buffer[2] = 0x6b_u8;
+                input_buffer[3] = 0xaa_u8;
+                self.from_interrupt(&input_buffer, 8);
+                let mut input_buffer = [0x00_u8; 64];
+                input_buffer[0] = 0x04_u8;
+                input_buffer[1] = 0x64_u8;
+                input_buffer[2] = 0x6f_u8;
+                input_buffer[3] = 0x1a_u8;
+                input_buffer[4] = 0x06_u8;
+                self.polling_rate = self.from_interrupt(&mut input_buffer, 8) as u16;
+            }
+            _ => (),
+        }
+    }
+
+    fn from_interrupt(&mut self, input_buffer: &[u8], read_byte: usize) -> u8 {
+        self.device.write(&input_buffer).unwrap();
+        let mut output_buffer = [0x00_u8; 64];
+        sleep(Duration::from_millis(100));
+        self.device.read(&mut output_buffer).unwrap();
+        output_buffer[read_byte]
     }
 }
 
