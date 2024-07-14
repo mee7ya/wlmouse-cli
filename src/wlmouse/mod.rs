@@ -146,19 +146,17 @@ impl WLMouse {
                 }
             }
             WLMouseProduct::BeastXReceiver | WLMouseProduct::BeastX => {
-                let mut input_buffer = [0x00_u8; 64];
-                input_buffer[0] = 0x04_u8;
-                input_buffer[1] = 0x6b_u8;
-                input_buffer[2] = 0x6b_u8;
-                input_buffer[3] = 0xaa_u8;
-                self.from_interrupt(&input_buffer, 8);
-                let mut input_buffer = [0x00_u8; 64];
-                input_buffer[0] = 0x04_u8;
-                input_buffer[1] = 0x64_u8;
-                input_buffer[2] = 0x6f_u8;
-                input_buffer[3] = 0x1a_u8;
-                input_buffer[4] = 0x06_u8;
-                self.polling_rate = self.from_interrupt(&mut input_buffer, 8) as u16;
+                // let mut input_buffer = [0x00_u8; 64];
+                // input_buffer[0] = 0x04_u8;
+                // input_buffer[1] = 0x6b_u8;
+                // input_buffer[2] = 0xbd_u8;
+                // input_buffer[3] = 0x02_u8;
+                // let mut b: u8 = 0x00_u8;
+                // while b == 0x00_u8 {
+                //     b = self.from_interrupt(&mut input_buffer, 19);
+                // }
+                // self.polling_rate = b as u16;
+                ()
             }
             _ => (),
         }
