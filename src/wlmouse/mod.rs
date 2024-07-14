@@ -3,13 +3,35 @@ use std::{thread::sleep, time::Duration};
 
 use hidapi::{HidApi, HidDevice, HidError};
 
+#[repr(u16)]
+pub enum WLMouseProduct {
+    BeastX8KReceiver = 0xA883,
+    BeastX8K = 0xA884,
+    BeastX = 0xA888,
+    BeastXReceiver = 0xA887,
+    Unknown = 0x0,
+}
+
+impl TryFrom<u16> for WLMouseProduct {
+    type Error = ();
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            0xA883 => Ok(Self::BeastX8KReceiver),
+            0xA884 => Ok(Self::BeastX8K),
+            0xA888 => Ok(Self::BeastX),
+            0xA887 => Ok(Self::BeastXReceiver),
+            _ => Ok(Self::Unknown),
+        }
+    }
+}
+
 pub struct WLMouse {
     pub vendor_id: u16,
     pub product_id: u16,
     pub battery: u8,
     pub polling_rate: u16,
-    pub manufacturer: String,
-    pub product: String,
+    pub product: WLMouseProduct,
     device: HidDevice,
 }
 
@@ -19,24 +41,46 @@ impl WLMouse {
             Ok(api) => api,
             Err(error) => return Err(error),
         };
-        let device: HidDevice = match api.open(vendor_id, product_id) {
-            Ok(device) => device,
-            Err(error) => return Err(error),
-        };
-        let manufacturer = match device.get_manufacturer_string() {
-            Ok(manufacturer) => manufacturer.unwrap_or(String::new()),
-            Err(error) => return Err(error),
-        };
-        let product = match device.get_product_string() {
-            Ok(product) => product.unwrap_or(String::new()),
-            Err(error) => return Err(error),
+        let product: WLMouseProduct =
+            WLMouseProduct::try_from(product_id).unwrap_or(WLMouseProduct::Unknown);
+        let device: HidDevice = match product {
+            WLMouseProduct::BeastX8K | WLMouseProduct::BeastX8KReceiver => {
+                match api.open(vendor_id, product_id) {
+                    Ok(device) => device,
+                    Err(error) => return Err(error),
+                }
+            }
+            WLMouseProduct::BeastX | WLMouseProduct::BeastXReceiver => {
+                let mut device: Option<HidDevice> = None;
+                for device_info in api.device_list() {
+                    if product_id == device_info.product_id() {
+                        let _device = device_info.open_device(&api).unwrap();
+                        let mut buff = [0x00_u8; 40];
+                        _device.get_report_descriptor(&mut buff).unwrap();
+                        if buff[0] == 0x06_u8 {
+                            device = Some(_device);
+                            break;
+                        }
+                    }
+                }
+                if device.is_none() {
+                    return Err(HidError::HidApiError {
+                        message: "Nowhere to read/write, everything is protected".to_string(),
+                    });
+                }
+                device.unwrap()
+            }
+            _ => {
+                return Err(HidError::HidApiError {
+                    message: "Unknown product id".to_string(),
+                });
+            }
         };
         Ok(WLMouse {
             vendor_id,
             product_id,
             battery: 0,
             polling_rate: 0,
-            manufacturer,
             product,
             device,
         })
@@ -47,17 +91,28 @@ impl WLMouse {
     Device can sometimes output incorrect values, possibly repeat report multiple times?
     */
     pub fn get_battery(&mut self) -> () {
-        let mut input_buffer = [0x00_u8; 65];
-        input_buffer[3] = 0x02_u8;
-        input_buffer[4] = 0x02_u8;
-        input_buffer[6] = 0x83_u8; // battery byte
+        match WLMouseProduct::try_from(self.product_id).unwrap() {
+            WLMouseProduct::BeastX8KReceiver | WLMouseProduct::BeastX8K => {
+                let mut input_buffer = [0x00_u8; 65];
+                input_buffer[3] = 0x02_u8;
+                input_buffer[4] = 0x02_u8;
+                input_buffer[6] = 0x83_u8; // battery byte
 
-        let mut output_buffer = [0x00_u8; 65];
+                let mut output_buffer = [0x00_u8; 65];
 
-        let _ = self.device.send_feature_report(&input_buffer);
-        sleep(Duration::from_millis(100)); // We have to sleep a bit, so device can prepare results
-        let _ = self.device.get_feature_report(&mut output_buffer);
-        self.battery = output_buffer[8];
+                let _ = self.device.send_feature_report(&input_buffer);
+                sleep(Duration::from_millis(100)); // We have to sleep a bit, so device can prepare results
+                let _ = self.device.get_feature_report(&mut output_buffer);
+                self.battery = output_buffer[8];
+            }
+            WLMouseProduct::BeastXReceiver | WLMouseProduct::BeastX => {
+                let mut input_buffer = [0x00_u8; 64];
+                input_buffer[0] = 0x04_u8;
+                input_buffer[3] = 0x1a_u8;
+                self.battery = self.from_interrupt(&mut input_buffer, 8);
+            }
+            _ => (),
+        };
     }
 
     /**
@@ -65,33 +120,66 @@ impl WLMouse {
     Device can sometimes output incorrect values, possibly repeat report multiple times?
     */
     pub fn get_polling_rate(&mut self) -> () {
-        let mut input_buffer = [0x00_u8; 65];
-        input_buffer[3] = 0x02_u8;
-        input_buffer[4] = 0x02_u8;
-        input_buffer[5] = 0x01_u8; // polling rate byte
-        input_buffer[6] = 0x80_u8; // polling rate byte
-        input_buffer[7] = 0x01_u8; // polling rate byte
+        match WLMouseProduct::try_from(self.product_id).unwrap() {
+            WLMouseProduct::BeastX8KReceiver | WLMouseProduct::BeastX8K => {
+                let mut input_buffer = [0x00_u8; 65];
+                input_buffer[3] = 0x02_u8;
+                input_buffer[4] = 0x02_u8;
+                input_buffer[5] = 0x01_u8; // polling rate byte
+                input_buffer[6] = 0x80_u8; // polling rate byte
+                input_buffer[7] = 0x01_u8; // polling rate byte
 
-        let mut output_buffer = [0x00_u8; 65];
+                let mut output_buffer = [0x00_u8; 65];
 
-        let _ = self.device.send_feature_report(&input_buffer);
-        sleep(Duration::from_millis(100)); // We have to sleep a bit, so device can prepare results
-        let _ = self.device.get_feature_report(&mut output_buffer);
-        self.polling_rate = match output_buffer[8] {
-            0x08 => 125,
-            0x04 => 250,
-            0x02 => 500,
-            0x01 => 1000,
-            0x20 => 2000,
-            0x40 => 4000,
-            0x80 => 8000,
-            _ => 0,
-        };
+                let _ = self.device.send_feature_report(&input_buffer);
+                sleep(Duration::from_millis(100)); // We have to sleep a bit, so device can prepare results
+                let _ = self.device.get_feature_report(&mut output_buffer);
+                self.polling_rate = match output_buffer[8] {
+                    0x08 => 125,
+                    0x04 => 250,
+                    0x02 => 500,
+                    0x01 => 1000,
+                    0x20 => 2000,
+                    0x40 => 4000,
+                    0x80 => 8000,
+                    _ => 0,
+                }
+            }
+            WLMouseProduct::BeastXReceiver | WLMouseProduct::BeastX => {
+                // let mut input_buffer = [0x00_u8; 64];
+                // input_buffer[0] = 0x04_u8;
+                // input_buffer[1] = 0x6b_u8;
+                // input_buffer[2] = 0xbd_u8;
+                // input_buffer[3] = 0x02_u8;
+                // let mut b: u8 = 0x00_u8;
+                // while b == 0x00_u8 {
+                //     b = self.from_interrupt(&mut input_buffer, 19);
+                // }
+                // self.polling_rate = b as u16;
+                ()
+            }
+            _ => (),
+        }
+    }
+
+    fn from_interrupt(&mut self, input_buffer: &[u8], read_byte: usize) -> u8 {
+        self.device.write(&input_buffer).unwrap();
+        let mut output_buffer = [0x00_u8; 64];
+        sleep(Duration::from_millis(100));
+        self.device.read(&mut output_buffer).unwrap();
+        output_buffer[read_byte]
     }
 }
 
 impl fmt::Display for WLMouse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", { &self.product })
+        let product = match self.product {
+            WLMouseProduct::BeastX8KReceiver => "WLMouse Beast X 8K Receiver",
+            WLMouseProduct::BeastX8K => "WLMouse Beast X 8K",
+            WLMouseProduct::BeastXReceiver => "WLMouse Beast X Receiver",
+            WLMouseProduct::BeastX => "WLMouse Beast X",
+            _ => "Unknown",
+        };
+        write!(f, "{}", product)
     }
 }
